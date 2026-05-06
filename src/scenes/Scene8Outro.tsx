@@ -49,17 +49,6 @@ export const Scene8Outro: React.FC = () => {
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const ctaProgress = spring({
-    frame: frame - Math.round(0.9 * fps),
-    fps,
-    config: { damping: 9, stiffness: 160, mass: 1 },
-    durationInFrames: Math.round(0.5 * fps),
-  });
-  const ctaY = interpolate(ctaProgress, [0, 1], [20, 0]);
-  const ctaOpacity = interpolate(ctaProgress, [0, 0.4], [0, 1], {
-    extrapolateRight: "clamp",
-  });
-
   return (
     <AbsoluteFill style={{ background: COLORS.ink, overflow: "hidden" }}>
       <Rays />
@@ -105,27 +94,6 @@ export const Scene8Outro: React.FC = () => {
           }}
         >
           ▶ looping back to scene 01 ...
-        </div>
-        <div
-          style={{
-            marginTop: 24,
-            display: "inline-flex",
-            gap: 10,
-            fontFamily: FONT_SPACE_MONO,
-            fontSize: 12,
-            letterSpacing: "0.3em",
-            color: COLORS.ink,
-            background: COLORS.c2,
-            padding: "10px 18px",
-            borderRadius: 999,
-            textTransform: "uppercase",
-            position: "relative",
-            zIndex: 3,
-            transform: `translateY(${ctaY}px)`,
-            opacity: ctaOpacity,
-          }}
-        >
-          PRESS ↻ TO REPLAY
         </div>
       </AbsoluteFill>
     </AbsoluteFill>

@@ -12,6 +12,15 @@ type Particle = {
   rad: number;
 };
 
+type Phase = "swirlIn" | "settle" | "read" | "swirlOut";
+
+const PHASE_END = {
+  swirlIn: 0.30,
+  settle: 0.40,
+  read: 0.78,
+  // swirlOut runs from 0.78 to 1.0
+} as const;
+
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
   return () => {
@@ -92,8 +101,9 @@ const Poster: React.FC<{ opacity: number }> = ({ opacity }) => (
         style={{
           fontFamily: FONT_ANTON,
           fontSize: 200,
-          lineHeight: 0.85,
+          lineHeight: 1,
           color: COLORS.c2,
+          marginTop: 12,
         }}
       >
         07
@@ -135,9 +145,10 @@ const Poster: React.FC<{ opacity: number }> = ({ opacity }) => (
 
 const ParticleCanvas: React.FC<{
   particles: Particle[];
-  phase: "in" | "hold" | "out" | "back";
+  phase: Phase;
   lt: number;
-}> = ({ particles, phase, lt }) => {
+  alpha: number;
+}> = ({ particles, phase, lt, alpha }) => {
   const ref = useRef<HTMLCanvasElement>(null);
   const frame = useCurrentFrame();
 
@@ -148,37 +159,35 @@ const ParticleCanvas: React.FC<{
     if (!ctx) return;
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
 
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+
     for (const p of particles) {
       let dx: number;
       let dy: number;
-      if (phase === "in") {
+      if (phase === "swirlIn") {
         const k = 1 - Math.pow(1 - lt, 3);
         const sx = 640 + Math.cos(p.ang) * p.rad * 1.5;
         const sy = 360 + Math.sin(p.ang) * p.rad * 1.5;
         dx = sx + (p.tx - sx) * k;
         dy = sy + (p.ty - sy) * k;
-      } else if (phase === "hold") {
+      } else if (phase === "settle") {
         dx = p.tx + Math.sin(lt * 8 + p.tx * 0.05) * 1.5;
         dy = p.ty + Math.cos(lt * 8 + p.ty * 0.05) * 1.5;
-      } else if (phase === "out") {
+      } else {
+        // swirlOut — eased radial spiral outward
         const k = lt;
         const ang = p.ang + lt * Math.PI * 1.5;
         const r = k * p.rad * 1.6;
         dx = p.tx + Math.cos(ang) * r;
         dy = p.ty + Math.sin(ang) * r;
-      } else {
-        const k = 1 - Math.pow(1 - lt, 3);
-        const ang = p.ang + 1.5 * Math.PI;
-        const r = p.rad * 1.6;
-        const sx = p.tx + Math.cos(ang) * r;
-        const sy = p.ty + Math.sin(ang) * r;
-        dx = sx + (p.tx - sx) * k;
-        dy = sy + (p.ty - sy) * k;
       }
       ctx.fillStyle = p.c;
       ctx.fillRect(dx, dy, p.s, p.s);
     }
-  }, [frame, particles, phase, lt]);
+
+    ctx.globalAlpha = 1;
+  }, [frame, particles, phase, lt, alpha]);
 
   return (
     <canvas
@@ -196,37 +205,53 @@ export const Scene7Poster: React.FC = () => {
   const particles = useMemo(createParticles, []);
 
   const t = frame / durationInFrames;
-  let phase: "in" | "hold" | "out" | "back";
+  let phase: Phase;
   let lt: number;
-  if (t < 0.2) {
-    phase = "in";
-    lt = t / 0.2;
-  } else if (t < 0.55) {
-    phase = "hold";
-    lt = (t - 0.2) / 0.35;
-  } else if (t < 0.85) {
-    phase = "out";
-    lt = (t - 0.55) / 0.3;
+  if (t < PHASE_END.swirlIn) {
+    phase = "swirlIn";
+    lt = t / PHASE_END.swirlIn;
+  } else if (t < PHASE_END.settle) {
+    phase = "settle";
+    lt = (t - PHASE_END.swirlIn) / (PHASE_END.settle - PHASE_END.swirlIn);
+  } else if (t < PHASE_END.read) {
+    phase = "read";
+    lt = (t - PHASE_END.settle) / (PHASE_END.read - PHASE_END.settle);
   } else {
-    phase = "back";
-    lt = (t - 0.85) / 0.15;
+    phase = "swirlOut";
+    lt = (t - PHASE_END.read) / (1 - PHASE_END.read);
   }
 
   let posterOpacity = 0;
-  if (phase === "in") {
-    posterOpacity = lt;
-  } else if (phase === "hold") {
+  if (phase === "swirlIn") {
+    posterOpacity = lt * 0.2;
+  } else if (phase === "settle") {
+    posterOpacity = 0.2 + 0.8 * lt;
+  } else if (phase === "read") {
     posterOpacity = 1;
-  } else if (phase === "out") {
-    posterOpacity = Math.max(0, 1 - lt * 1.4);
   } else {
-    posterOpacity = lt;
+    posterOpacity = Math.max(0, 1 - lt * 1.6);
+  }
+
+  let particleAlpha: number;
+  if (phase === "swirlIn") {
+    particleAlpha = 1;
+  } else if (phase === "settle") {
+    particleAlpha = 1 - lt;
+  } else if (phase === "read") {
+    particleAlpha = 0;
+  } else {
+    particleAlpha = Math.min(1, lt * 1.6);
   }
 
   return (
     <AbsoluteFill style={{ background: COLORS.c3, overflow: "hidden" }}>
       <Poster opacity={posterOpacity} />
-      <ParticleCanvas particles={particles} phase={phase} lt={lt} />
+      <ParticleCanvas
+        particles={particles}
+        phase={phase}
+        lt={lt}
+        alpha={particleAlpha}
+      />
     </AbsoluteFill>
   );
 };

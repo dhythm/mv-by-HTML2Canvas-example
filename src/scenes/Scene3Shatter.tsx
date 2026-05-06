@@ -12,7 +12,16 @@ type Particle = {
   s: number;
 };
 
-// Deterministic pseudo-random so particles are stable across frames + render workers.
+type Phase = "assemble" | "settle" | "read" | "explode";
+
+// Phase boundaries — the "read" window is where the card must be perfectly legible.
+const PHASE_END = {
+  assemble: 0.30,
+  settle: 0.40,
+  read: 0.78,
+  // explode runs from 0.78 to 1.0
+} as const;
+
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
   return () => {
@@ -104,10 +113,7 @@ const Card: React.FC<{ opacity: number; scale: number }> = ({ opacity, scale }) 
         <br />
         EFFECT
       </h2>
-      <p style={{ fontSize: 14, lineHeight: 1.6, color: "#444" }}>
-        html2canvasでDOM要素をピクセル化、何百もの粒子に分裂させて再構築。リアルなレイアウトをそのまま破壊できる。
-      </p>
-      <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, marginTop: 24, flexWrap: "wrap" }}>
         {["#html2canvas", "#particles", "#kinetic"].map((tag) => (
           <span
             key={tag}
@@ -130,9 +136,10 @@ const Card: React.FC<{ opacity: number; scale: number }> = ({ opacity, scale }) 
 
 const ParticleCanvas: React.FC<{
   particles: Particle[];
-  phase: "in" | "hold" | "explode" | "reform";
+  phase: Phase;
   lt: number;
-}> = ({ particles, phase, lt }) => {
+  alpha: number;
+}> = ({ particles, phase, lt, alpha }) => {
   const ref = useRef<HTMLCanvasElement>(null);
   const frame = useCurrentFrame();
 
@@ -143,31 +150,35 @@ const ParticleCanvas: React.FC<{
     if (!ctx) return;
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
 
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+
     for (const p of particles) {
-      let dx = p.tx;
-      let dy = p.ty;
-      if (phase === "in") {
+      let dx: number;
+      let dy: number;
+      if (phase === "assemble") {
+        // From scattered start (offset by velocity + drop), settle to target.
         const k = 1 - Math.pow(1 - lt, 3);
-        dx = p.tx + (1 - k) * p.vx * 30;
-        dy = p.ty + (1 - k) * p.vy * 30 + (1 - k) * 200;
-      } else if (phase === "hold") {
-        dx = p.tx + Math.sin(lt * 6 + p.tx * 0.05) * 1.2;
-        dy = p.ty + Math.cos(lt * 6 + p.ty * 0.05) * 1.2;
-      } else if (phase === "explode") {
-        const k = lt * lt;
-        dx = p.tx + p.vx * 40 * k + Math.sin(p.ty * 0.02 + lt * 4) * 30 * k;
-        dy = p.ty + p.vy * 40 * k + 200 * k * k;
-      } else {
-        const k = 1 - Math.pow(1 - lt, 3);
-        const sx = p.tx + p.vx * 40 + Math.sin(p.ty * 0.02 + 4) * 30;
-        const sy = p.ty + p.vy * 40 + 200;
+        const sx = p.tx + p.vx * 50;
+        const sy = p.ty + p.vy * 50 + 240;
         dx = sx + (p.tx - sx) * k;
         dy = sy + (p.ty - sy) * k;
+      } else if (phase === "settle") {
+        // Hover near target with tiny jitter while fading out.
+        dx = p.tx + Math.sin(lt * 6 + p.tx * 0.05) * 1.2;
+        dy = p.ty + Math.cos(lt * 6 + p.ty * 0.05) * 1.2;
+      } else {
+        // explode — burst outward from target, accelerating.
+        const k = lt * lt;
+        dx = p.tx + p.vx * 50 * k + Math.sin(p.ty * 0.02 + lt * 4) * 30 * k;
+        dy = p.ty + p.vy * 50 * k + 220 * k * k;
       }
       ctx.fillStyle = p.c;
       ctx.fillRect(dx, dy, p.s, p.s);
     }
-  }, [frame, particles, phase, lt]);
+
+    ctx.globalAlpha = 1;
+  }, [frame, particles, phase, lt, alpha]);
 
   return (
     <canvas
@@ -185,52 +196,63 @@ const ParticleCanvas: React.FC<{
 
 export const Scene3Shatter: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
+  const { durationInFrames } = useVideoConfig();
   const particles = useMemo(createParticles, []);
 
-  // total scene duration in frames is durationInFrames (set by Sequence)
   const t = frame / durationInFrames;
-  let phase: "in" | "hold" | "explode" | "reform";
+  let phase: Phase;
   let lt: number;
-  if (t < 0.15) {
-    phase = "in";
-    lt = t / 0.15;
-  } else if (t < 0.45) {
-    phase = "hold";
-    lt = (t - 0.15) / 0.3;
-  } else if (t < 0.8) {
-    phase = "explode";
-    lt = (t - 0.45) / 0.35;
+  if (t < PHASE_END.assemble) {
+    phase = "assemble";
+    lt = t / PHASE_END.assemble;
+  } else if (t < PHASE_END.settle) {
+    phase = "settle";
+    lt = (t - PHASE_END.assemble) / (PHASE_END.settle - PHASE_END.assemble);
+  } else if (t < PHASE_END.read) {
+    phase = "read";
+    lt = (t - PHASE_END.settle) / (PHASE_END.read - PHASE_END.settle);
   } else {
-    phase = "reform";
-    lt = (t - 0.8) / 0.2;
+    phase = "explode";
+    lt = (t - PHASE_END.read) / (1 - PHASE_END.read);
   }
 
-  // Card visibility:
-  //  in:    fade-in to full
-  //  hold:  full
-  //  explode: fade-out
-  //  reform: fade back in
+  // Card visibility — dim during assemble (background to particles), full during read.
   let cardOpacity = 0;
   let cardScale = 1;
-  if (phase === "in") {
-    cardOpacity = lt;
-    cardScale = 0.92 + 0.08 * lt;
-  } else if (phase === "hold") {
+  if (phase === "assemble") {
+    cardOpacity = lt * 0.2;
+    cardScale = 0.92 + 0.06 * lt;
+  } else if (phase === "settle") {
+    cardOpacity = 0.2 + 0.8 * lt;
+    cardScale = 0.98 + 0.02 * lt;
+  } else if (phase === "read") {
     cardOpacity = 1;
-    cardScale = 1 + Math.sin(lt * Math.PI * 2) * 0.005;
-  } else if (phase === "explode") {
-    cardOpacity = Math.max(0, 1 - lt * 1.4);
-    cardScale = 1 + lt * 0.05;
+    cardScale = 1 + Math.sin(lt * Math.PI * 2) * 0.003;
   } else {
-    cardOpacity = lt;
-    cardScale = 0.96 + 0.04 * lt;
+    // explode — fade out card so particles read as the destruction itself
+    cardOpacity = Math.max(0, 1 - lt * 1.6);
+    cardScale = 1 + lt * 0.06;
   }
 
+  // Particle alpha — strong during entry, gone during read, ramps back up for explode.
+  let particleAlpha: number;
+  if (phase === "assemble") {
+    particleAlpha = 1;
+  } else if (phase === "settle") {
+    particleAlpha = 1 - lt;
+  } else if (phase === "read") {
+    particleAlpha = 0;
+  } else {
+    particleAlpha = Math.min(1, lt * 1.6);
+  }
+
+  // Tagline appears once we're solidly into the read phase.
+  const readStart = Math.round(PHASE_END.settle * durationInFrames);
+  const readEnd = Math.round(PHASE_END.read * durationInFrames);
   const msgOpacity = interpolate(
     frame,
-    [Math.round(0.6 * fps), Math.round(1.0 * fps)],
-    [0, 1],
+    [readStart + 6, readStart + 22, readEnd - 6, readEnd + 4],
+    [0, 1, 1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
@@ -242,7 +264,12 @@ export const Scene3Shatter: React.FC = () => {
       }}
     >
       <Card opacity={cardOpacity} scale={cardScale} />
-      <ParticleCanvas particles={particles} phase={phase} lt={lt} />
+      <ParticleCanvas
+        particles={particles}
+        phase={phase}
+        lt={lt}
+        alpha={particleAlpha}
+      />
       <div
         style={{
           position: "absolute",
