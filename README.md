@@ -1,6 +1,11 @@
 # POP MOTION REEL
 
-`untitled/project/animation.html` のキネティックモーションリール（1280×720 / 60fps / 30秒8シーン）を **Remotion** で実装した動画プロジェクト。
+1280×720 / 60fps / 30秒 8シーンのキネティックモーションリール。
+
+## 経緯
+
+- 当初は **Claude Design**（[claude.ai/design](https://claude.ai/design)）でデザインモックを作成し、`html2canvas` で DOM をピクセル化してパーティクル化する素の HTML/CSS/JS プロトタイプとして書き出された
+- その後、動画プロジェクトとして継続管理するため **Remotion** に移管。プロトタイプの視覚仕様を踏襲しつつ、フレーム独立レンダリングで安定して書き出せる構造に再実装した
 
 ## セットアップ
 
@@ -50,13 +55,8 @@ src/
     Scene8Outro.tsx     アウトロのレイ + タイトル
 ```
 
-## プロトタイプとの差分
+## プロトタイプからの主な書き換えポイント
 
-- 元の `animation.html` で使われていた `html2canvas` による DOM スナップショット →
-  Remotion のフレーム独立レンダリングと相性が悪いため、各シャッターシーンでは **シードベースの決定的乱数で粒子を生成し Canvas に描画** + DOM 側はカード/ポスターを通常レンダリング、というハイブリッドに置き換え。視覚効果は維持しつつ毎フレーム再現性のある描画を実現。
-- Web Animations API（`element.animate(...)`）と CSS animation/transition は Remotion ではフレームレンダ時に再現されないため、すべて `useCurrentFrame()` + `interpolate` / `spring` ベースに移植。
-- フォントは `<link>` ではなく `@remotion/google-fonts` で読み込み、レンダリング時の確実性を担保。
-
-## 元プロトタイプ
-
-`untitled/project/animation.html` および `animation.html`（プロジェクトルートに展開済み）はブラウザで直接開ける素のプロトタイプとして残しています。デザインの参照に使用してください。
+- **`html2canvas` を不採用**。Remotion のフレーム独立レンダリングと相性が悪いため、各シャッターシーンは「シードベースの決定的乱数で粒子を生成し Canvas に描画」+「DOM 側でカード/ポスターを通常レンダリング」というハイブリッドに置き換え。視覚効果は維持しつつ毎フレーム再現性のある描画を実現
+- **CSS animation / Web Animations API（`element.animate(...)`）を全廃**。Remotion ではレンダ時に反映されないため、すべて `useCurrentFrame()` + `interpolate` / `spring` ベースに移植
+- **フォントは `@remotion/google-fonts`** で読み込み、レンダリング時の確実性を担保
